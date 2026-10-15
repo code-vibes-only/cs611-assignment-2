@@ -1,0 +1,16 @@
+# Python and Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# raw data is not ours to publish; it goes in the submission zip instead
+data/
+
+# rebuilt by the pipeline
+datamart/
+model_bank/
+logs/
+
+# macOS, submission zip
+.DS_Store
+*.zip
