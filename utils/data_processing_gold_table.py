@@ -1,4 +1,5 @@
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 import pyspark.sql.functions as F
 from pyspark.sql.functions import col
@@ -71,14 +72,17 @@ def process_features_gold_table(snapshot_date_str, silver_attributes_directory, 
             df = df.withColumn(c + "_" + v, F.when(col(c) == v, 1).otherwise(0))
             one_hot_columns.append(c + "_" + v)
 
-    # clickstream: average of each feature over the months up to and including the application month
-    clickstream = spark.read.parquet(silver_clickstream_directory + "*").filter(col("snapshot_date") <= snapshot_date) # later months are future information at time of application so they are removed
+    # clickstream: average of each feature over the 3 months up to and including the application month
+    # later months are future information at time of application so they are removed;
+    # a fixed window keeps the feature's distribution the same for every application month
+    window_start = snapshot_date - relativedelta(months=2)
+    clickstream = spark.read.parquet(silver_clickstream_directory + "*").filter((col("snapshot_date") >= window_start) & (col("snapshot_date") <= snapshot_date))
     fe_columns = [f"fe_{i}" for i in range(1, 21)]
-    clickstream_history = clickstream.groupBy("Customer_ID").agg(*[F.avg(c).alias(c + "_avg") for c in fe_columns])
+    clickstream_history = clickstream.groupBy("Customer_ID").agg(*[F.avg(c).alias(c + "_avg_3m") for c in fe_columns])
     df = df.join(clickstream_history, "Customer_ID", "left")
 
     # select columns to save: keys, then features (no identifiers, no raw text)
-    df = df.select(["Customer_ID", "snapshot_date"] + NUMERIC_FEATURES + ["Debt_to_Annual_Salary", "EMI_to_Monthly_Salary"]+ one_hot_columns + [c + "_avg" for c in fe_columns])
+    df = df.select(["Customer_ID", "snapshot_date"] + NUMERIC_FEATURES + ["Debt_to_Annual_Salary", "EMI_to_Monthly_Salary"]+ one_hot_columns + [c + "_avg_3m" for c in fe_columns])
 
     # save gold table - IRL connect to database to write
     partition_name = "gold_feature_store_" + partition_date + ".parquet"
@@ -87,6 +91,3 @@ def process_features_gold_table(snapshot_date_str, silver_attributes_directory, 
     print("saved to:", filepath)
 
     return df
-
-
-
