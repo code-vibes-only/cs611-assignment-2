@@ -32,7 +32,7 @@ def process_labels_gold_table(snapshot_date_str, silver_loan_daily_directory, go
     return df
 
 
-# fixed category lists from the EDA (data quality §4); a missing category is 0 in every column
+# fixed category lists from the A1 EDA; a missing category is 0 in every column
 CATEGORIES = {
     "Occupation": ["Accountant", "Architect", "Developer", "Doctor", "Engineer", "Entrepreneur", "Journalist",
                    "Lawyer", "Manager", "Mechanic", "Media_Manager", "Musician", "Scientist", "Teacher", "Writer"],
