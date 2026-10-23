@@ -20,6 +20,26 @@ import xgboost as xgb
 # months in which a model is trained (the first month with 8 months of matured labels, notebooks/02_model_training.ipynb)
 TRAIN_DATES = ["2024-03-01"]
 
+# the features the model uses: the feature store's 66 minus the 7 that neither candidate used on the 2024-03-01
+# training split (notebooks/04_feature_pruning.ipynb); the feature store itself keeps all 66
+FEATURE_COLUMNS = [
+    "Annual_Income", "Monthly_Inhand_Salary", "Num_Credit_Card", "Interest_Rate", "Num_of_Loan",
+    "Delay_from_due_date", "Num_of_Delayed_Payment", "Changed_Credit_Limit", "Num_Credit_Inquiries",
+    "Outstanding_Debt", "Credit_Utilization_Ratio", "Credit_History_Months", "Total_EMI_per_month",
+    "Amount_invested_monthly", "Debt_to_Annual_Salary", "EMI_to_Monthly_Salary", "Occupation_Accountant",
+    "Occupation_Architect", "Occupation_Developer", "Occupation_Doctor", "Occupation_Engineer",
+    "Occupation_Entrepreneur", "Occupation_Journalist", "Occupation_Lawyer", "Occupation_Manager",
+    "Occupation_Mechanic", "Occupation_Media_Manager", "Occupation_Musician", "Occupation_Scientist",
+    "Occupation_Teacher", "Occupation_Writer", "Credit_Mix_Bad", "Credit_Mix_Standard", "Credit_Mix_Good",
+    "Payment_of_Min_Amount_Yes", "Payment_of_Min_Amount_No", "Payment_of_Min_Amount_NM",
+    "Payment_Behaviour_Low_spent_Small_value_payments", "Payment_Behaviour_Low_spent_Medium_value_payments",
+    "Payment_Behaviour_Low_spent_Large_value_payments", "Payment_Behaviour_High_spent_Small_value_payments",
+    "Payment_Behaviour_High_spent_Medium_value_payments", "Payment_Behaviour_High_spent_Large_value_payments",
+    "fe_1_avg_3m", "fe_2_avg_3m", "fe_3_avg_3m", "fe_4_avg_3m", "fe_5_avg_3m", "fe_7_avg_3m", "fe_8_avg_3m",
+    "fe_9_avg_3m", "fe_10_avg_3m", "fe_11_avg_3m", "fe_12_avg_3m", "fe_13_avg_3m", "fe_14_avg_3m",
+    "fe_15_avg_3m", "fe_18_avg_3m", "fe_19_avg_3m",
+]
+
 # hyperparameter search space for each candidate
 PARAM_DIST = {
     "logreg": {
@@ -78,7 +98,7 @@ def main(snapshotdate, modeltype):
     print("joined rows", data_pdf.shape[0])
 
     # --- split data into train - test - oot ---
-    feature_cols = [c for c in data_pdf.columns if c not in ("Customer_ID", "snapshot_date", "label")]
+    feature_cols = FEATURE_COLUMNS
     oot_pdf = data_pdf[data_pdf["snapshot_date"] >= config["oot_start_date"]]
     train_test_pdf = data_pdf[data_pdf["snapshot_date"] <= config["train_test_end_date"]]
 
