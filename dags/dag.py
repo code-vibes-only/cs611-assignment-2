@@ -50,3 +50,16 @@ with DAG(
         dep_check >> bronze >> silver >> gold_feature_store
 
     gold_feature_store >> feature_store_completed
+
+    # --- model auto training: only does work in training months (TRAIN_DATES in model_train.py) ---
+    model_automl_start = EmptyOperator(task_id="model_automl_start")
+
+    model_1_automl = BashOperator(task_id="model_1_automl", bash_command=run("model_train.py --modeltype logreg"))
+    model_2_automl = BashOperator(task_id="model_2_automl", bash_command=run("model_train.py --modeltype xgb"))
+    model_select = BashOperator(task_id="model_select", bash_command=run("model_select.py"))
+
+    model_automl_completed = EmptyOperator(task_id="model_automl_completed")
+
+    feature_store_completed >> model_automl_start
+    label_store_completed >> model_automl_start
+    model_automl_start >> [model_1_automl, model_2_automl] >> model_select >> model_automl_completed

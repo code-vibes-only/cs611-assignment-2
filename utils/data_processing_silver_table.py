@@ -156,10 +156,10 @@ def process_silver_loan_table(snapshot_date_str, bronze_directory, silver_direct
         "snapshot_date": DateType(),
     })
 
-    # augment data: add month on book (Lab 2)
+    # augment data: add month on book
     df = df.withColumn("mob", col("installment_num").cast(IntegerType()))
 
-    # augment data: add days past due (Lab 2)
+    # augment data: add days past due
     # fill the column where 0/0 gives null
     df = df.withColumn("installments_missed", F.ceil(col("overdue_amt") / col("due_amt")).cast(IntegerType())).fillna(0, subset=["installments_missed"])
     df = df.withColumn("first_missed_date", F.when(col("installments_missed") > 0,
