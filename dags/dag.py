@@ -63,3 +63,13 @@ with DAG(
     feature_store_completed >> model_automl_start
     label_store_completed >> model_automl_start
     model_automl_start >> [model_1_automl, model_2_automl] >> model_select >> model_automl_completed
+
+    # --- model inference: the selected model scores this month's applications ---
+    model_inference_start = EmptyOperator(task_id="model_inference_start")
+
+    model_inference = BashOperator(task_id="model_inference", bash_command=run("model_inference.py"))
+
+    model_inference_completed = EmptyOperator(task_id="model_inference_completed")
+
+    model_automl_completed >> model_inference_start  # in a training month, score with the model trained this month
+    model_inference_start >> model_inference >> model_inference_completed
