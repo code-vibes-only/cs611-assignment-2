@@ -73,3 +73,13 @@ with DAG(
 
     model_automl_completed >> model_inference_start  # in a training month, score with the model trained this month
     model_inference_start >> model_inference >> model_inference_completed
+
+    # --- model monitoring: stability of this month, performance of the month whose labels arrive now ---
+    model_monitor_start = EmptyOperator(task_id="model_monitor_start")
+
+    model_monitor = BashOperator(task_id="model_monitor", bash_command=run("model_monitor.py"))
+
+    model_monitor_completed = EmptyOperator(task_id="model_monitor_completed")
+
+    model_inference_completed >> model_monitor_start
+    model_monitor_start >> model_monitor >> model_monitor_completed
