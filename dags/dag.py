@@ -25,6 +25,7 @@ with DAG(
     end_date=datetime(2025, 7, 1),
     catchup=True,
     max_active_runs=1,  # months run in order: month T reads tables built for earlier months
+    is_paused_upon_creation=False,  # start the backfill as soon as Airflow is up
 ) as dag:
 
     # --- label store ---
