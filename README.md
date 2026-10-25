@@ -45,7 +45,7 @@ The four raw CSV files are not stored in Git. Copy them into `data/`:
    docker-compose up
    ```
 3. Open Airflow at http://localhost:8080 and log in with `admin` / `admin`
-4. Unpause the DAG `dag`. It catches up one run per month from its start date
+4. The DAG `dag` starts its backfill by itself: 31 monthly runs, about an hour in total. The model is trained in the 2024-03 run (about half an hour in); predictions follow from then on, and performance monitoring from the 2024-09 run
 5. JupyterLab, for the notebooks, is at http://localhost:8888
 
 ## Outputs
