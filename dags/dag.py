@@ -83,3 +83,8 @@ with DAG(
 
     model_inference_completed >> model_monitor_start
     model_monitor_start >> model_monitor >> model_monitor_completed
+
+    # --- visualise: redraw the monitoring charts with every month so far ---
+    model_monitor_charts = BashOperator(task_id="model_monitor_charts", bash_command=run("model_monitor_charts.py"))
+
+    model_monitor_completed >> model_monitor_charts
