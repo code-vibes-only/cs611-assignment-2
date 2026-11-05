@@ -62,14 +62,14 @@ The four raw CSV files are not stored in Git. Copy them into `data/`:
 - **Prediction point:** the application month. Features use information up to that month only; the clickstream features average the 3 months up to and including it.
 - **Labels mature 6 months after application.** A model trained at month T uses only labels dated before T, so applications up to T − 7. The model is trained at 2024-03-01 on applications 2023-01 to 2023-06 (80/20 train/test) and 2023-07 to 2023-08 (out-of-time, OOT). Imputation and scaling are fitted on the training split only.
 - **Features:** the model trains on 59 of the feature store's 66 features (`FEATURE_COLUMNS` in `model_train.py`). Notebook 04 dropped the 7 that neither candidate used on the training split; the selected model's OOT AUC stayed within 0.005 at three train dates. The feature store keeps all 66.
-- **Selection:** the candidate with the higher OOT AUC goes into the selection record that inference reads.
+- **Selection:** each candidate is tuned on its validation folds (3-fold cross-validation on the training split); the candidate with the higher test AUC goes into the selection record that inference reads. The record keeps every candidate's train, validation, test and OOT AUC, so the approver can see a candidate that drops sharply from train to test. The OOT months are not used to choose: they stay the untouched check of the chosen model, and its OOT AUC is the baseline for performance monitoring.
 - **Monitoring:** stability is measured in the month scored (PSI of the scores and of each feature against the training data); performance (AUC, Gini) six months later, when the labels arrive. Status bands: PSI < 0.1 green, 0.1–0.25 amber, > 0.25 red; AUC within 0.05 of the OOT AUC at training green, within 0.10 amber, otherwise red.
 
 ## Monitoring charts
 In every run, `model_monitor_charts` redraws three charts in `datamart/monitoring_charts/` from every monitoring partition up to that month:
 - `performance.png`: the AUC of each scored month against the OOT AUC at training, coloured by status; below it, the actual bad rate against the predicted one (the mean score).
 - `score_stability.png`: the PSI of each month's scores against the training scores, with the 0.1 and 0.25 bands.
-- `feature_stability.png`: the CSI status of the 20 most drifted features, month by month.
+- `feature_stability.png`: the CSI (characteristic stability index: the PSI of one feature) status of the 20 most drifted features, month by month.
 
 What they show over the backfill (applications scored from 2024-03 to 2025-01):
 - Until 2024-06 everything is green: score PSI 0.015 to 0.046, AUC 0.814 to 0.844.
@@ -86,15 +86,15 @@ A red status is first traced to its cause. A data or pipeline fault is fixed and
 |---|---|---|---|
 | All green | None; review the charts | Model owner | Monthly |
 | Score PSI or a feature's CSI amber | Find the cause: a feed or pipeline change, or a real change in applicants. Record it | Model owner | Within the month |
-| A feature's CSI red | Check the feed with the data engineer. A pipeline fault: fix it and rerun the affected months by clearing their tasks in Airflow. A feed that cannot be restored: train a challenger without the feature | Model owner, data engineer | Within a week |
+| A feature's CSI red | Check the feed with the data engineer. A pipeline fault: fix it and rerun the affected months by clearing their tasks in Airflow. A feed that cannot be restored: flag the scores made without it, decide with the approver whether to pause inference until a model without the feature is approved, and train that challenger | Model owner, data engineer, model approver | Within a week |
 | Score PSI red | As for a red feature, and tell the approver: a fixed score cut-off now approves a different share of applicants | Model owner, model approver | Within a week |
 | AUC red, or AUC amber 3 months in a row | Train a challenger on the latest matured labels | Model owner | The next month |
 | Mean score and actual bad rate more than 5 points apart, 2 months in a row | Tell the approver: losses expected from the score are off. Recalibrate, or train a challenger | Model owner, model approver | The next month |
 | Every 6 months, even when green | Train a challenger, to test for a better model | Model owner | Scheduled |
 
 How a challenger replaces the model:
-1. **Train.** On a branch, add the refresh month to `TRAIN_DATES` in `model_train.py`, and change `FEATURE_COLUMNS` if a feature is dropped (keeping the earlier list for earlier train dates, so they rebuild unchanged). Running that month's `model_` tasks trains both candidates and selects the better on OOT AUC.
-2. **Compare.** The challenger must beat the current model on the same OOT months, scored on the data the current model now receives (for a dead feed, with that feature blanked). Otherwise the comparison favours the model that relies on the dead feed.
+1. **Train.** On a branch, add the refresh month to `TRAIN_DATES` in `model_train.py`, and change `FEATURE_COLUMNS` if a feature is dropped (keeping the earlier list for earlier train dates, so they rebuild unchanged). Running that month's `model_` tasks trains both candidates and selects the better on test AUC.
+2. **Compare.** The challenger must beat the current model on the same recent months, which neither model was tuned or selected on, scored on the data the current model now receives (for a dead feed, with that feature blanked). Otherwise the comparison favours the model that relies on the dead feed.
 3. **Approve and deploy.** The approver signs off the comparison; merging the branch deploys it, since from the refresh month inference reads the newest selection record. A cautious switch scores both models for a month or two first (shadow), and the monitoring table holds rows for each `model_name`.
 4. **Roll back.** Earlier artefacts and selection records stay in `model_bank/`. Removing the new selection record and clearing `model_inference` for the months since the refresh puts the previous model back.
 
