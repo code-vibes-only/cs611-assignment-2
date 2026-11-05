@@ -7,7 +7,9 @@ from model_train import TRAIN_DATES
 
 # to call this script: python model_select.py --snapshotdate "2024-03-01"
 
-SELECTION_METRIC = "auc_oot"  # out-of-time AUC: performance on the most recent months the model never saw
+# each candidate was tuned on the validation folds, so the final choice between them is made on the test split;
+# the out-of-time months are kept as the untouched check of the chosen model: recorded, never compared
+SELECTION_METRIC = "auc_test"
 
 
 def main(snapshotdate):
@@ -18,11 +20,22 @@ def main(snapshotdate):
     # compare every candidate trained this month
     date_suffix = snapshotdate.replace('-', '_')
     candidates = {}
+    metrics = {}
     for file_path in sorted(glob.glob(f"model_bank/credit_model_*_{date_suffix}.pkl")):
         with open(file_path, 'rb') as file:
             model_artefact = pickle.load(file)
-        candidates[model_artefact['model_version']] = model_artefact['results'][SELECTION_METRIC]
-        print(model_artefact['model_version'], SELECTION_METRIC, round(candidates[model_artefact['model_version']], 4))
+        version = model_artefact['model_version']
+        results = model_artefact['results']
+        candidates[version] = results[SELECTION_METRIC]
+        # the whole picture for the approver: a large drop from train to test is a sign of over-tuning
+        metrics[version] = {
+            "auc_train": results["auc_train"],
+            "auc_cv": results["auc_cv"],
+            "auc_test": results["auc_test"],
+            "auc_oot": results["auc_oot"],
+            "train_test_gap": results["auc_train"] - results["auc_test"],
+        }
+        print(version, {name: round(value, 4) for name, value in metrics[version].items()})
 
     best_model_version = max(candidates, key=candidates.get)
 
@@ -32,6 +45,7 @@ def main(snapshotdate):
         "selected_model": best_model_version,
         "selection_metric": SELECTION_METRIC,
         "candidates": candidates,
+        "metrics": metrics,
     }
     file_path = f"model_bank/model_selection_{date_suffix}.json"
     with open(file_path, 'w') as file:
