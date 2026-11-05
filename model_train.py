@@ -143,8 +143,11 @@ def main(snapshotdate, modeltype):
     best_model = random_search.best_estimator_
     print("Best parameters found: ", random_search.best_params_)
 
-    # --- evaluate on train, test and oot ---
+    # --- evaluate on validation (the cross-validation folds the search tuned on), train, test and oot ---
     results = {}
+    results["auc_cv"] = random_search.best_score_  # mean AUC of the best settings over the 3 validation folds
+    results["gini_cv"] = round(2 * random_search.best_score_ - 1, 3)
+
     for split, X, y in [("train", X_train_processed, y_train), ("test", X_test_processed, y_test), ("oot", X_oot_processed, y_oot)]:
         auc = roc_auc_score(y, best_model.predict_proba(X)[:, 1])
         results["auc_" + split] = auc
