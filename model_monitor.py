@@ -16,7 +16,7 @@ LABEL_MATURITY_MONTHS = 6  # 30dpd_6mob: an application's label is known 6 month
 
 def psi(reference, current):
     """Population Stability Index of current values against reference values.
-    Bins are the reference deciles; missing values are their own bin, so a feed that stops shows up."""
+    Bins are the reference deciles; missing values are their own bin, so a feature that goes missing shows up."""
     reference, current = pd.Series(reference, dtype=float), pd.Series(current, dtype=float)
     edges = np.unique(np.nanquantile(reference, np.linspace(0.1, 0.9, 9)))
 
@@ -41,9 +41,10 @@ def auc_status(value, auc_at_training):
 
 
 def load_predictions(month_str):
-    """Predictions for one application month, from whichever model scored it (None if not scored)"""
-    files = glob.glob("datamart/gold/model_predictions/*/*_predictions_" + month_str.replace('-', '_') + ".parquet")
-    return pd.read_parquet(files[0]) if files else None
+    """Predictions for one application month: one frame per model that scored it (none if it was not scored).
+    Normally one model scores a month; during a shadow run or after a rollback there can be two, and each is monitored"""
+    files = sorted(glob.glob("datamart/gold/model_predictions/*/*_predictions_" + month_str.replace('-', '_') + ".parquet"))
+    return [pd.read_parquet(file_path) for file_path in files]
 
 
 def load_model_artefact(model_version):
@@ -54,13 +55,13 @@ def load_model_artefact(model_version):
 def main(snapshotdate):
     rows = []
 
-    # --- stability: this month's scores and features against the training reference ---
-    predictions = load_predictions(snapshotdate)
-    if predictions is not None:
+    # --- stability: this month's scores and features against the training reference of each model that scored it ---
+    feature_path = "datamart/gold/feature_store/gold_feature_store_" + snapshotdate.replace('-', '_') + ".parquet"
+    for predictions in load_predictions(snapshotdate):
         model_version = predictions["model_name"].iloc[0]
         model_artefact = load_model_artefact(model_version)
         reference = model_artefact["reference"]
-        features = pd.read_parquet("datamart/gold/feature_store/gold_feature_store_" + snapshotdate.replace('-', '_') + ".parquet")
+        features = pd.read_parquet(feature_path)
 
         def add(metric, value, n, status):
             rows.append([model_version, snapshotdate, snapshotdate, "stability", metric, value, n, status])
@@ -72,25 +73,29 @@ def main(snapshotdate):
             value = psi(reference["train_features"][feature], features[feature])
             add("csi_" + feature, value, len(features), psi_status(value))
 
-    # --- performance: the month whose labels mature now ---
+    # --- performance: the month whose labels mature now, for each model that scored it ---
     scored_month = (datetime.strptime(snapshotdate, "%Y-%m-%d") - relativedelta(months=LABEL_MATURITY_MONTHS)).strftime("%Y-%m-%d")
-    scored = load_predictions(scored_month)
     label_path = "datamart/gold/label_store/gold_label_store_" + snapshotdate.replace('-', '_') + ".parquet"
-    if scored is not None and os.path.exists(label_path):
+    if os.path.exists(label_path):
         labels = pd.read_parquet(label_path)[["Customer_ID", "loan_start_date", "label"]]
         labels = labels.rename(columns={"loan_start_date": "snapshot_date"})
-        joined = scored.merge(labels, on=["Customer_ID", "snapshot_date"], how="inner")
-        model_version = scored["model_name"].iloc[0]
-        auc_at_training = load_model_artefact(model_version)["results"]["auc_oot"]
+        for scored in load_predictions(scored_month):
+            joined = scored.merge(labels, on=["Customer_ID", "snapshot_date"], how="inner")
+            model_version = scored["model_name"].iloc[0]
+            auc_at_training = load_model_artefact(model_version)["results"]["auc_oot"]
 
-        def add(metric, value, status):
-            rows.append([model_version, snapshotdate, scored_month, "performance", metric, value, len(joined), status])
+            def add(metric, value, status):
+                rows.append([model_version, snapshotdate, scored_month, "performance", metric, value, len(joined), status])
 
-        auc = roc_auc_score(joined["label"], joined["model_predictions"])
-        add("auc", auc, auc_status(auc, auc_at_training))
-        add("gini", 2 * auc - 1, auc_status(auc, auc_at_training))
-        add("actual_bad_rate", joined["label"].mean(), "")
-        add("predicted_bad_rate", joined["model_predictions"].mean(), "")
+            # the AUC needs both outcomes among the matured labels; the bad rates are reported regardless
+            if joined["label"].nunique() == 2:
+                auc = roc_auc_score(joined["label"], joined["model_predictions"])
+                add("auc", auc, auc_status(auc, auc_at_training))
+                add("gini", 2 * auc - 1, auc_status(auc, auc_at_training))
+            else:
+                print(f"{scored_month}: only one outcome among {len(joined)} matured labels, no AUC this month")
+            add("actual_bad_rate", joined["label"].mean(), "")
+            add("predicted_bad_rate", joined["model_predictions"].mean(), "")
 
     if not rows:
         print(f"nothing to monitor for {snapshotdate}, skipping")
