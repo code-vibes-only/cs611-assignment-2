@@ -6,6 +6,8 @@ import pickle
 
 import pandas as pd
 
+from model_train import TRAIN_DATES
+
 # to call this script: python model_inference.py --snapshotdate "2024-03-01"
 
 
@@ -25,6 +27,10 @@ def main(snapshotdate):
     # --- find the best model available at this month ---
     model_version = current_model_version(snapshotdate)
     if model_version is None:
+        if snapshotdate >= TRAIN_DATES[0]:
+            # a model was due by now: a missing record means training or selection failed, and scoring must not
+            # quietly succeed with nothing
+            raise SystemExit(f"no selection record on or before {snapshotdate}, but a model was due at {TRAIN_DATES[0]}: fix training first")
         print(f"no model trained on or before {snapshotdate}, skipping")
         return
 

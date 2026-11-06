@@ -39,13 +39,15 @@ def main(snapshotdate):
 
     best_model_version = max(candidates, key=candidates.get)
 
-    # selection record: inference reads this to find the model to use
+    # selection record: inference reads this to find the model to use; the approver's sign-off is written into it
+    # by hand when the model is deployed (the README's SOP), so a record without it is a selection, not an approval
     selection = {
         "train_date": snapshotdate,
         "selected_model": best_model_version,
         "selection_metric": SELECTION_METRIC,
         "candidates": candidates,
         "metrics": metrics,
+        "approved_by": None,
     }
     file_path = f"model_bank/model_selection_{date_suffix}.json"
     with open(file_path, 'w') as file:
