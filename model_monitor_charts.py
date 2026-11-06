@@ -15,7 +15,6 @@ from matplotlib.colors import ListedColormap
 
 CHART_DIRECTORY = "datamart/monitoring_charts/"
 STATUS_COLOURS = {"green": "#0ca30c", "amber": "#fab219", "red": "#d03b3b"}
-FEED_STOPPED = pd.Timestamp("2024-07-01").date()  # first application month with no clickstream data
 
 plt.rcParams.update({
     "figure.facecolor": "white", "axes.edgecolor": "#c3c2b7", "axes.labelcolor": "#52514e",
@@ -25,13 +24,13 @@ plt.rcParams.update({
 })
 
 
-def time_axis(ax, months, snapshotdate):
-    """One tick per plotted month; once the run has reached it, a line at the month the clickstream feed stopped"""
+def time_axis(ax, months, first_red_month):
+    """One tick per plotted month; a line at the first month whose score PSI turned red, once the run has one"""
     months = list(months)
-    if pd.Timestamp(snapshotdate).date() >= FEED_STOPPED:
-        months.append(FEED_STOPPED)
-        ax.axvline(FEED_STOPPED, color="#898781", linewidth=1)
-        ax.annotate(" clickstream feed stopped", (FEED_STOPPED, 1), xycoords=("data", "axes fraction"),
+    if first_red_month is not None:
+        months.append(first_red_month)
+        ax.axvline(first_red_month, color="#898781", linewidth=1)
+        ax.annotate(f" score PSI red from {first_red_month.strftime('%Y-%m')}", (first_red_month, 1), xycoords=("data", "axes fraction"),
                     va="top", fontsize=9, color="#52514e")
     ax.set_xlim(min(months) - timedelta(days=20), max(months) + timedelta(days=20))
     ax.xaxis.set_major_locator(mdates.MonthLocator())
@@ -54,6 +53,13 @@ def status_points(ax, data):
                        edgecolors="white", linewidths=1.5, label=status)
 
 
+def lines_by_model(ax, data, **kwargs):
+    """One line per model that scored the months shown (normally one; two during a shadow run)"""
+    several = data["model_name"].nunique() > 1
+    for model_name, series in data.groupby("model_name"):
+        ax.plot(series["prediction_month"], series["value"], label=model_name if several else None, **kwargs)
+
+
 def main(snapshotdate):
     # --- empty the chart folder: it holds only the charts as of this month ---
     os.makedirs(CHART_DIRECTORY, exist_ok=True)
@@ -68,6 +74,11 @@ def main(snapshotdate):
         return
     monitoring = pd.concat([pd.read_parquet(f) for f in files])
 
+    # the month the score distribution first turned red, if it has: marked on every chart
+    psi = monitoring[monitoring["metric"] == "psi_score"].sort_values("prediction_month")
+    red_months = psi.loc[psi["status"] == "red", "prediction_month"]
+    first_red_month = red_months.min() if len(red_months) else None
+
     # --- performance: AUC and bad rates of each scored month, once its labels have arrived ---
     perf = monitoring[monitoring["metric_group"] == "performance"].sort_values("prediction_month")
     if len(perf):
@@ -75,12 +86,12 @@ def main(snapshotdate):
         with open(f"model_bank/{auc['model_name'].iloc[-1]}.pkl", "rb") as file:
             auc_at_training = pickle.load(file)["results"]["auc_oot"]
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6.5), sharex=True, height_ratios=[3, 2])
-        ax1.plot(auc["prediction_month"], auc["value"], color="#52514e", linewidth=2)
+        lines_by_model(ax1, auc, color="#52514e", linewidth=2)
         status_points(ax1, auc)
         threshold(ax1, auc_at_training, f"OOT AUC\nat training\n{auc_at_training:.3f}")
         threshold(ax1, auc_at_training - 0.05, "amber\nbelow")
         threshold(ax1, auc_at_training - 0.10, "red\nbelow")
-        time_axis(ax1, auc["prediction_month"], snapshotdate)
+        time_axis(ax1, auc["prediction_month"], first_red_month)
         ax1.set_ylim(auc_at_training - 0.20, auc_at_training + 0.05)
         ax1.set_ylabel("AUC")
         ax1.legend(title="AUC status", loc="lower left", ncols=3)
@@ -90,7 +101,7 @@ def main(snapshotdate):
         for metric, colour, label in [("actual_bad_rate", "#2a78d6", "actual"), ("predicted_bad_rate", "#eb6834", "predicted (mean score)")]:
             rate = perf[perf["metric"] == metric]
             ax2.plot(rate["prediction_month"], rate["value"], color=colour, linewidth=2, marker="o", label=label)
-        time_axis(ax2, auc["prediction_month"], snapshotdate)
+        time_axis(ax2, auc["prediction_month"], first_red_month)
         ax2.set_ylim(0, 0.45)
         ax2.set_ylabel("Bad rate")
         ax2.legend(loc="lower left", ncols=2)
@@ -99,14 +110,13 @@ def main(snapshotdate):
         plt.close(fig)
 
     # --- stability: PSI of the score distribution against training, with the PSI bands ---
-    psi = monitoring[monitoring["metric"] == "psi_score"].sort_values("prediction_month")
     if len(psi):
         fig, ax = plt.subplots(figsize=(9, 4))
-        ax.plot(psi["prediction_month"], psi["value"], color="#52514e", linewidth=2)
+        lines_by_model(ax, psi, color="#52514e", linewidth=2)
         status_points(ax, psi)
         threshold(ax, 0.1, "amber\nabove 0.1")
         threshold(ax, 0.25, "red\nabove 0.25")
-        time_axis(ax, psi["prediction_month"], snapshotdate)
+        time_axis(ax, psi["prediction_month"], first_red_month)
         ax.set_ylim(0, max(0.5, psi["value"].max() * 1.15))
         ax.set_ylabel("PSI")
         ax.legend(title="PSI status", loc="upper left", ncols=3, bbox_to_anchor=(0, 0.9))
@@ -119,16 +129,19 @@ def main(snapshotdate):
     # --- feature stability: CSI status of each feature by month, the 20 most drifted features ---
     csi = monitoring[monitoring["metric"].str.startswith("csi_")]
     if len(csi):
-        values = csi.pivot_table(index="metric", columns="prediction_month", values="value")
+        # one row per model and feature, so two models in one month (a shadow run) do not collide
+        values = csi.pivot_table(index=["model_name", "metric"], columns="prediction_month", values="value")
         order = values.max(axis=1).sort_values(ascending=False).index
         shown, hidden = order[:20], order[20:]
         csi = csi.assign(code=csi["status"].map({"green": 0, "amber": 1, "red": 2}))  # the status stored by monitoring
-        codes = csi.pivot(index="metric", columns="prediction_month", values="code").loc[shown]
+        codes = csi.pivot(index=["model_name", "metric"], columns="prediction_month", values="code").loc[shown]
+        several = csi["model_name"].nunique() > 1
         fig, ax = plt.subplots(figsize=(10, 7))
         ax.pcolormesh(codes.values, cmap=ListedColormap(list(STATUS_COLOURS.values())), vmin=-0.5, vmax=2.5,
                       edgecolors="white", linewidth=2)
         ax.set_xticks([i + 0.5 for i in range(len(codes.columns))], [d.strftime("%Y-%m") for d in codes.columns], rotation=45)
-        ax.set_yticks([i + 0.5 for i in range(len(shown))], [m.replace("csi_", "") for m in shown])
+        ax.set_yticks([i + 0.5 for i in range(len(shown))],
+                      [(f"{model} · " if several else "") + metric.replace("csi_", "") for model, metric in shown])
         ax.invert_yaxis()
         ax.grid(False)
         handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in STATUS_COLOURS.values()]

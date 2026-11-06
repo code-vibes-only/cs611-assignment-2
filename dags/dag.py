@@ -5,9 +5,13 @@ from datetime import datetime, timedelta
 
 default_args = {
     'owner': 'airflow',
-    'depends_on_past': False,
+    # month T's task waits for month T-1's to have succeeded, and for T-1's next tasks too: a failed month holds
+    # the backfill instead of being skipped over, so no month is built on a half-built earlier one
+    'depends_on_past': True,
+    'wait_for_downstream': True,
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(minutes=30),  # a hung task fails instead of blocking the backfill for good
 }
 
 
@@ -52,18 +56,19 @@ with DAG(
 
     gold_feature_store >> feature_store_completed
 
-    # --- model auto training: only does work in training months (TRAIN_DATES in model_train.py) ---
-    model_automl_start = EmptyOperator(task_id="model_automl_start")
+    # --- model training: each candidate's settings tuned by a random search on 3-fold CV AUC, then the selection on
+    # test AUC; only does work in training months (TRAIN_DATES in model_train.py) ---
+    model_train_start = EmptyOperator(task_id="model_train_start")
 
-    model_1_automl = BashOperator(task_id="model_1_automl", bash_command=run("model_train.py --modeltype logreg"))
-    model_2_automl = BashOperator(task_id="model_2_automl", bash_command=run("model_train.py --modeltype xgb"))
+    model_train_logreg = BashOperator(task_id="model_train_logreg", bash_command=run("model_train.py --modeltype logreg"))
+    model_train_xgb = BashOperator(task_id="model_train_xgb", bash_command=run("model_train.py --modeltype xgb"))
     model_select = BashOperator(task_id="model_select", bash_command=run("model_select.py"))
 
-    model_automl_completed = EmptyOperator(task_id="model_automl_completed")
+    model_train_completed = EmptyOperator(task_id="model_train_completed")
 
-    feature_store_completed >> model_automl_start
-    label_store_completed >> model_automl_start
-    model_automl_start >> [model_1_automl, model_2_automl] >> model_select >> model_automl_completed
+    feature_store_completed >> model_train_start
+    label_store_completed >> model_train_start
+    model_train_start >> [model_train_logreg, model_train_xgb] >> model_select >> model_train_completed
 
     # --- model inference: the selected model scores this month's applications ---
     model_inference_start = EmptyOperator(task_id="model_inference_start")
@@ -72,7 +77,7 @@ with DAG(
 
     model_inference_completed = EmptyOperator(task_id="model_inference_completed")
 
-    model_automl_completed >> model_inference_start  # in a training month, score with the model trained this month
+    model_train_completed >> model_inference_start  # in a training month, score with the model trained this month
     model_inference_start >> model_inference >> model_inference_completed
 
     # --- model monitoring: stability of this month, performance of the month whose labels arrive now ---
